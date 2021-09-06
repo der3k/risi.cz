@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <link
+      href="https://unpkg.com/tailwindcss@^1.0/dist/tailwind.min.css"
+      rel="stylesheet"
+    />
+    <script src="https://code.jquery.com/jquery-3.4.1.min.js"></script>
+    <script src="https://trello.com/1/client.js?key=1cdc213d07b88247ec846f90400f3ce8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue "></script>
+  </head>
+
+  <body>
+    <div class="px-4" id="work-report">
+      <p class="text-4xl">Total ({{total.time}}h/{{total.price}})</p>
+      <Queue
+        v-for="queue in queues"
+        :title="queue.title"
+        :cards="queue.cards"
+        :time="queue.time"
+        :price="queue.price"
+      ></Queue>
+    </div>
+
+    <script>
+      Trello.authorize({
+        type: "popup",
+        name: "cblistna-elders",
+        persist: true,
+        scope: {
+          read: true,
+          write: false
+        },
+        success: () => {
+          function fetch(path, options = { fields: "id" }) {
+            return new Promise((resolve, reject) =>
+              Trello.get(path, options, resolve, reject)
+            );
+          }
+
+          function fetchBoards(options) {
+            return fetch(`/members/me/boards`, options);
+          }
+
+          function fetchLists(boardId, options) {
+            return fetch(`/boards/${boardId}/lists`, options);
+          }
+
+          function fetchCards(listId, options) {
+            return fetch(`/lists/${listId}/cards`, options);
+          }
+
+          function fetchComments(cardId, options) {
+            return fetch(`/cards/${cardId}/actions`, {
+              ...options,
+              type: "commentCard"
+            });
+          }
+
+          function resolveCard(card, comments, rate) {
+            const workPattern = /^\/\/W\s+(\w+)h\s+(.*)$/;
+            const workLog = comments
+              .map(comment => comment.data && comment.data.text)
+              .filter(text => !!text)
+              .map(text => {
+                const work = text.match(workPattern);
+                return {
+                  comment: (work && work[2]) || text,
+                  time: work && work[1] ? parseFloat(work[1]) : 0.0
+                };
+              });
+            const time = workLog.reduce((acc, work) => acc + work.time, 0.0);
+            const price = time * rate;
+
+            return {
+              ...card,
+              lines: card.desc.split("\n"),
+              workLog,
+              time,
+              price
+            };
+          }
+
+          function resolveCards(cards, rate) {
+            return Promise.all(
+              cards.map(card =>
+                fetchComments(card.id, {
+                  fields: "id,data,date"
+                }).then(comments => resolveCard(card, comments, rate))
+              )
+            );
+          }
+
+          function resolveQueue(id, title, rate) {
+            return fetchCards(id, {
+              fields: "id,name,desc,closed"
+            })
+              .then(cards => resolveCards(cards, rate))
+              .then(cards => ({
+                id,
+                title,
+                cards,
+                time: cards.reduce((acc, card) => acc + card.time, 0.0),
+                price: cards.reduce((acc, card) => acc + card.price, 0.0)
+              }));
+          }
+
+          // fetchBoards({ fields: 'id,name' })
+          //   .then(boards => console.table(boards));
+
+          // fetchLists("4f6a1203075b78a2209312bf", {
+          //   fields: "id,name,closed",
+          //   filter: "all"
+          // }).then(lists => console.table(lists));
+
+          const hourRate = 500.0;
+          resolveQueue(
+            "4f6a1203075b78a2209312c4",
+            "In progress",
+            hourRate
+          ).then(queue => workReport.queues.push(queue));
+
+          resolveQueue(
+            "4f6a1203075b78a2209312c5",
+            "Done",
+            hourRate
+          ).then(queue => workReport.queues.push(queue));
+
+          Vue.component("Queue", {
+            props: ["id", "title", "cards", "time", "price"],
+            template: `
+              <div>
+                <p class="text-3xl font-medium mb-2">{{title}} ({{time}}h/{{price}})</p>
+                <div v-for="card in cards">
+                  <p class="text-xl mb-1">
+                    {{card.name}} ({{card.time}}h/{{ card.price }})
+                  </p>
+                  <div class="mb-4 ml-3">
+                    <p v-for="work in card.workLog" class="leading-snug mb-2">
+                      {{work.time}}h {{work.comment}}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            `
+          });
+
+          const workReport = new Vue({
+            el: "#work-report",
+            data: {
+              queues: []
+            },
+            computed: {
+              total: function() {
+                return {
+                  time: this.queues.reduce((acc, q) => acc + q.time, 0.0),
+                  price: this.queues.reduce((acc, q) => acc + q.price, 0.0),
+                }
+              }
+            }
+
+          });
+        },
+
+        error: () => {
+          console.log("not authorized");
+        }
+      });
+    </script>
+  </body>
+</html>
